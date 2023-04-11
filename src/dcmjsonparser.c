@@ -201,13 +201,13 @@ static void processSSHWhiteList(cJSON *sshFeature)
  *   }
  *
  */
-void main(int argc, char **argv)
+int main(int argc, char **argv)
 {
     char *data = NULL,*dcmResponse = NULL;
     cJSON *paramObj = NULL, *childObj = NULL,*json=NULL,*configData=NULL,*effectiveImmediate=NULL;
     FILE *fileRead = NULL,*fileWrite =NULL;
 
-    long len;
+    long len , var;
     int i;
     errno_t rc = -1;
     int ind = -1;
@@ -226,146 +226,149 @@ void main(int argc, char **argv)
 
     printf("dcmjsonparser: dcm response file name %s\n",dcmResponse);
     
-    fileRead = fopen( dcmResponse, "r+" );    
-    if( fileRead == NULL ) 
+    fileRead = fopen( dcmResponse, "r+" );
+    if( fileRead == NULL )
     {
         printf( "dcmjsonparser: Error opening file in read mode\n" );
         exit(0);
     }
-    
     fseek( fileRead, 0, SEEK_END );
     len = ftell( fileRead );
+    if( len < 0 ){
+        printf( "dcmjsonparser: failed to obtain the length of the file\n");
+        exit(0);//exiting due to negative length
+    }
     fseek( fileRead, 0, SEEK_SET );
     data = ( char* )malloc( len + 1 );
-    fread( data, 1, len, fileRead );
+    if( data != NULL){
+        var = fread( data, 1, len, fileRead );
+    }
+    else{
+        printf( "dcmjsonparser: no memory available \n");
+        exit(0);
+    }
+    if( var!=len ){
+        printf( "dcmjsonparser: failed to read the data from the file\n" );
+        exit(0);
+    }
     fclose( fileRead );
-
-    if( data != NULL ) 
+    json = cJSON_Parse( data );
+    if( !json ){
+        printf( "dcmjsonparser: json parse error: [%s]\n", cJSON_GetErrorPtr() );
+        t2_event_d("SYS_INFO_WEBPA_Config_Corruption", 1);
+    }
+    else
     {
-        json = cJSON_Parse( data );
-
-        if( !json ) 
+        printf( "dcmjsonparser: cjson parse success\n" );
+        fileWrite=fopen(RFC_CONFIG_DATA,"w+");
+        if(fileWrite ==NULL)
         {
-            printf( "dcmjsonparser: json parse error: [%s]\n", cJSON_GetErrorPtr() );
-            t2_event_d("SYS_INFO_WEBPA_Config_Corruption", 1);
-        } 
-        else 
+            printf( "dcmjsonparser: Error opening file in write mode\n" );
+            free(data);
+            exit(0);
+        }
+        paramObj = cJSON_GetObjectItem( json, "featureControl" );
+        if( paramObj != NULL )
         {
-            printf( "dcmjsonparser: cjson parse success\n" );
-            
-            fileWrite=fopen(RFC_CONFIG_DATA,"w+");
-            if(fileWrite ==NULL)
+            cJSON * configset_id = cJSON_GetObjectItem( paramObj, "configset-id" );
+            if(configset_id !=NULL)
             {
-                printf( "dcmjsonparser: Error opening file in write mode\n" );
-                free(data);
-                exit(0);
-            }
-            
-            paramObj = cJSON_GetObjectItem( json, "featureControl" );
-            if( paramObj != NULL ) 
-            {
-                cJSON * configset_id = cJSON_GetObjectItem( paramObj, "configset-id" );
-                if(configset_id !=NULL)
+                char *configset = cJSON_GetObjectItem( paramObj, "configset-id" )->valuestring;
+                if(configset !=NULL)
                 {
-                    char *configset = cJSON_GetObjectItem( paramObj, "configset-id" )->valuestring;
-                    if(configset !=NULL)
-                    {
-                        printf( "dcmjsonparser: configset-id is %s\n", configset );
-                    }
-                    else
-                    {
-                        printf( "dcmjsonparser: configset-id value is NULL\n");
-                    }
+                    printf( "dcmjsonparser: configset-id is %s\n", configset );
                 }
                 else
                 {
-                    printf( "dcmjsonparser: configset-id not recieved in response\n");
-                }
-                cJSON * configset_label = cJSON_GetObjectItem( paramObj, "configset-label" );
-                if(configset_label !=NULL)
-                {
-                    char *configset = cJSON_GetObjectItem( paramObj, "configset-label" )->valuestring;
-                    if(configset !=NULL)
-                    {
-                        printf( "dcmjsonparser: configset-label is %s\n", configset );
-                    }
-                    else
-                    {
-                        printf( "dcmjsonparser: configset-label value is NULL\n");
-                    }
-                }
-                else
-                {
-                    printf( "dcmjsonparser: configset-label not recieved in response\n");
-                }
-                
-                childObj = cJSON_GetObjectItem( paramObj, "features" );
-                if(childObj !=NULL)
-                {
-                    int subitemSize = cJSON_GetArraySize( childObj );
-                    printf("dcmjsonparser: features array size is %d\n",subitemSize);
-                    int length = strlen("sshwhitelist");
-                    for( i = 0; i < subitemSize; i++ ) 
-                    {
-                        cJSON* subitem = cJSON_GetArrayItem( childObj, i );
-                        cJSON* featureName = cJSON_GetObjectItem(subitem, "name" );
-                        cJSON* listType =  cJSON_GetObjectItem(subitem, "listType");
-                        if (featureName != NULL && listType != NULL)
-                        {
-                            rc = strcasecmp_s("sshwhitelist",length, featureName->valuestring, &ind);
-                            ERR_CHK(rc);
-                            if ((!ind) && (rc == EOK))
-                            {
-                                printf("dcmjsonparser: SSHWhiteList feature found!!\n");
-                                processSSHWhiteList(subitem);
-                            }
-                        }
-
-                        effectiveImmediate = cJSON_GetObjectItem( subitem, "effectiveImmediate" );
-                        int effectiveImmediatevalue;
-                        if(effectiveImmediate !=NULL)
-                        {
-                                effectiveImmediatevalue=effectiveImmediate->valueint;
-                                printf("dcmjsonparser: effectiveImmediate is %d\n",effectiveImmediatevalue);
-                        }
-                        else
-                        {
-                                printf("dcmjsonparser: featureControl.features.effectiveImmediate object is not present\n");
-                        }
-
-                        configData = cJSON_GetObjectItem( subitem, "configData" );
-                        if(configData !=NULL)
-                        {
-                            cJSON *configObject = configData->child;
-                            while( configObject ) 
-                            {
-                                char *configKey = configObject->string;
-                                char *configValue = configObject->valuestring;
-                                printf("dcmjsonparser: key is %s\n",configKey); 
-                                printf("dcmjsonparser: value is %s\n",configValue); 
-                                if(strncmp(configKey,"tr181.",6)==0)
-                                {
-                                    /* #~ is used to seperate configKey,configValue,effectiveImmediatevalue which can used as delimiter to cut these values respectively.*/
-                                    fprintf(fileWrite, "%s#~%s#~%d\n", configKey,configValue,effectiveImmediatevalue );
-                                }
-                                configObject = configObject->next;
-                            }
-                        }
-                     }
-                }
-                else
-                {
-                    printf("dcmjsonparser: featureControl.features object is not present\n");
+                    printf( "dcmjsonparser: configset-id value is NULL\n");
                 }
             }
             else
             {
-                printf("dcmjsonparser: featureControl object is not present\n");
+                printf( "dcmjsonparser: configset-id not recieved in response\n");
             }
-            fclose(fileWrite);
+            cJSON * configset_label = cJSON_GetObjectItem( paramObj, "configset-label" );
+            if(configset_label !=NULL)
+            {
+                char *configset = cJSON_GetObjectItem( paramObj, "configset-label" )->valuestring;
+                if(configset !=NULL)
+                {
+                    printf( "dcmjsonparser: configset-label is %s\n", configset );
+                }
+                else
+                {
+                    printf( "dcmjsonparser: configset-label value is NULL\n");
+                }
+            }
+            else
+            {
+                printf( "dcmjsonparser: configset-label not recieved in response\n");
+            }
+            childObj = cJSON_GetObjectItem( paramObj, "features" );
+            if(childObj !=NULL)
+            {
+                int subitemSize = cJSON_GetArraySize( childObj );
+                printf("dcmjsonparser: features array size is %d\n",subitemSize);
+                int length = strlen("sshwhitelist");
+                for( i = 0; i < subitemSize; i++ )
+                {
+                    cJSON* subitem = cJSON_GetArrayItem( childObj, i );
+                    cJSON* featureName = cJSON_GetObjectItem(subitem, "name" );
+                    cJSON* listType =  cJSON_GetObjectItem(subitem, "listType");
+                    if (featureName != NULL && listType != NULL)
+                    {
+                        rc = strcasecmp_s("sshwhitelist",length, featureName->valuestring, &ind);
+                        ERR_CHK(rc);
+                        if ((!ind) && (rc == EOK))
+                        {
+                            printf("dcmjsonparser: SSHWhiteList feature found!!\n");
+                            processSSHWhiteList(subitem);
+                        }
+                    }
+                    effectiveImmediate = cJSON_GetObjectItem( subitem, "effectiveImmediate" );
+                    int effectiveImmediatevalue;
+                    if(effectiveImmediate !=NULL)
+                    {
+                            effectiveImmediatevalue=effectiveImmediate->valueint;
+                            printf("dcmjsonparser: effectiveImmediate is %d\n",effectiveImmediatevalue);
+                    }
+                    else
+                    {
+                            printf("dcmjsonparser: featureControl.features.effectiveImmediate object is not present\n");
+                    }
+                    configData = cJSON_GetObjectItem( subitem, "configData" );
+                    if(configData !=NULL)
+                    {
+                        cJSON *configObject = configData->child;
+                        while( configObject )
+                        {
+                            char *configKey = configObject->string;
+                            char *configValue = configObject->valuestring;
+                            printf("dcmjsonparser: key is %s\n",configKey); 
+                            printf("dcmjsonparser: value is %s\n",configValue);
+                            if(strncmp(configKey,"tr181.",6)==0)
+                            {
+                                /* #~ is used to seperate configKey,configValue,effectiveImmediatevalue which can used as delimiter to cut these values respectively.*/
+                                fprintf(fileWrite, "%s#~%s#~%d\n", configKey,configValue,effectiveImmediatevalue );
+                            }
+                            configObject = configObject->next;
+                        }
+                    }
+                 }
+            }
+            else
+            {
+                printf("dcmjsonparser: featureControl.features object is not present\n");
+            }
         }
-        free(data);
+        else
+        {
+            printf("dcmjsonparser: featureControl object is not present\n");
+        }
+        fclose(fileWrite);
     }
+    free(data);
+    return 0;
 }
 
 /**
