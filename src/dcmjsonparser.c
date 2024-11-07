@@ -365,6 +365,7 @@ int main(int argc, char **argv)
         {
             printf("dcmjsonparser: featureControl object is not present\n");
         }
+        cJSON_Delete(json);
         fclose(fileWrite);
     }
     free(data);
